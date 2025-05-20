@@ -1,5 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
+
+Import-Module HelpersCommon
+
 Describe "Basic FileSystem Provider Tests" -Tags "CI" {
     BeforeAll {
         $testDir = "TestDir"
@@ -199,6 +202,25 @@ Describe "Basic FileSystem Provider Tests" -Tags "CI" {
             $src = "$TestDrive$trailingChar"
 
             { Move-Item -Path $src -Destination $dest -ErrorAction Stop } | Should -Throw -ErrorId 'MoveItemArgumentError,Microsoft.PowerShell.Commands.MoveItemCommand'
+        }
+
+        It 'Verify Move-Item fails when destination is same as source w/wo directory separator: <source>' -TestCases @(
+            @{ source = './Empty/' }
+            @{ source = './Empty' }
+            @{ source = '.\Empty\' }
+            @{ source = '.\Empty' }
+        ) {
+            param($source)
+
+            try {
+                Push-Location $TestDrive
+                New-Item -ItemType Directory -Path 'Empty'
+                { Move-Item -Path $source -ErrorAction Stop } | Should -Throw -ErrorId 'MoveItemArgumentError,Microsoft.PowerShell.Commands.MoveItemCommand'
+            }
+            finally {
+                Pop-Location
+                Remove-Item 'Empty' -Force
+            }
         }
 
         It "Verify Move-Item throws correct error for non-existent source" {
@@ -583,11 +605,12 @@ Describe "Hard link and symbolic link tests" -Tags "CI", "RequireAdminOnWindows"
             }
         }
 
-        $realFile = Join-Path $TestPath "file.txt"
+        # Ensure that the file link can still be successfully created when the target file/directory name contains wildcards.
+        $realFile = Join-Path $TestPath "[file].txt"
         $nonFile = Join-Path $TestPath "not-a-file"
         $fileContent = "some text"
-        $realDir = Join-Path $TestPath "subdir"
-        $realDir2 = Join-Path $TestPath "second-subdir"
+        $realDir = Join-Path $TestPath "[subdir]"
+        $realDir2 = Join-Path $TestPath "[second-subdir]"
         $nonDir = Join-Path $TestPath "not-a-dir"
         $hardLinkToFile = Join-Path $TestPath "hard-to-file.txt"
         $symLinkToFile = Join-Path $TestPath "sym-link-to-file.txt"
@@ -602,6 +625,11 @@ Describe "Hard link and symbolic link tests" -Tags "CI", "RequireAdminOnWindows"
     }
 
     Context "New-Item and hard/symbolic links" {
+        AfterEach {
+            # clean up created links after each test
+            Remove-Item -Exclude (Split-Path -Leaf ([WildcardPattern]::Escape($realFile)), ([WildcardPattern]::Escape($realDir)), ([WildcardPattern]::Escape($realDir2))) -Recurse $TestPath/*
+        }
+
         It "New-Item can create a hard link to a file" {
             New-Item -ItemType HardLink -Path $hardLinkToFile -Value $realFile > $null
             Test-Path $hardLinkToFile | Should -BeTrue
@@ -612,7 +640,7 @@ Describe "Hard link and symbolic link tests" -Tags "CI", "RequireAdminOnWindows"
         It "New-Item can create symbolic link to file" {
             New-Item -ItemType SymbolicLink -Path $symLinkToFile -Value $realFile > $null
             Test-Path $symLinkToFile | Should -BeTrue
-            $real = Get-Item -Path $realFile
+            $real = Get-Item -LiteralPath $realFile
             $link = Get-Item -Path $symLinkToFile
             $link.LinkType | Should -BeExactly "SymbolicLink"
             $link.Target | Should -BeExactly $real.ToString()
@@ -631,7 +659,7 @@ Describe "Hard link and symbolic link tests" -Tags "CI", "RequireAdminOnWindows"
         It "New-Item can create a symbolic link to a directory" -Skip:($IsWindows) {
             New-Item -ItemType SymbolicLink -Path $symLinkToDir -Value $realDir > $null
             Test-Path $symLinkToDir | Should -BeTrue
-            $real = Get-Item -Path $realDir
+            $real = Get-Item -LiteralPath $realDir
             $link = Get-Item -Path $symLinkToDir
             $link.LinkType | Should -BeExactly "SymbolicLink"
             $link.Target | Should -BeExactly $real.ToString()
@@ -639,12 +667,37 @@ Describe "Hard link and symbolic link tests" -Tags "CI", "RequireAdminOnWindows"
         It "New-Item can create a directory symbolic link to a directory" -Skip:(-Not $IsWindows) {
             New-Item -ItemType SymbolicLink -Path $symLinkToDir -Value $realDir > $null
             Test-Path $symLinkToDir | Should -BeTrue
-            $real = Get-Item -Path $realDir
+            $real = Get-Item -LiteralPath $realDir
             $link = Get-Item -Path $symLinkToDir
             $link | Should -BeOfType System.IO.DirectoryInfo
             $link.LinkType | Should -BeExactly "SymbolicLink"
             $link.Target | Should -BeExactly $real.ToString()
         }
+
+        It "New-Item can create a directory symbolic link to a directory using a relative path" -Skip:(-Not $IsWindows) {
+            $target = Split-Path -Leaf $realDir
+            New-Item -ItemType SymbolicLink -Path $symLinkToDir -Value $target > $null
+            Test-Path $symLinkToDir | Should -BeTrue
+            $real = Get-Item -LiteralPath $realDir
+            $link = Get-Item -Path $symLinkToDir
+            $link | Should -BeOfType System.IO.DirectoryInfo
+            $link.LinkType | Should -BeExactly "SymbolicLink"
+            $link.ResolvedTarget | Should -BeExactly $real.ToString()
+            $link.Target | Should -BeExactly $target
+        }
+
+        It "New-Item can create a directory symbolic link to a directory using a relative path with .\" -Skip:(-Not $IsWindows) {
+            $target = ".\$(Split-Path -Leaf $realDir)"
+            New-Item -ItemType SymbolicLink -Path $symLinkToDir -Value $target > $null
+            Test-Path $symLinkToDir | Should -BeTrue
+            $real = Get-Item -LiteralPath $realDir
+            $link = Get-Item -Path $symLinkToDir
+            $link | Should -BeOfType System.IO.DirectoryInfo
+            $link.LinkType | Should -BeExactly "SymbolicLink"
+            $link.ResolvedTarget | Should -BeExactly $real.ToString()
+            $link.Target | Should -BeExactly $target
+        }
+
         It "New-Item can create a directory junction to a directory" -Skip:(-Not $IsWindows) {
             New-Item -ItemType Junction -Path $junctionToDir -Value $realDir > $null
             Test-Path $junctionToDir | Should -BeTrue
@@ -680,8 +733,8 @@ Describe "Hard link and symbolic link tests" -Tags "CI", "RequireAdminOnWindows"
         }
 
         It "New-Item -Force can overwrite a junction" -Skip:(-Not $IsWindows){
-            $rd2 = Get-Item -Path $realDir2
-            New-Item -Name testfile.txt -ItemType file -Path $realDir
+            $rd2 = Get-Item -LiteralPath $realDir2
+            New-Item -Name testfile.txt -ItemType file -Path ([WildcardPattern]::Escape($realDir))
             New-Item -ItemType Junction -Path $junctionToDir -Value $realDir > $null
             Test-Path $junctionToDir | Should -BeTrue
             { New-Item -ItemType Junction -Path $junctionToDir -Value $realDir -ErrorAction Stop > $null } | Should -Throw -ErrorId "DirectoryNotEmpty,Microsoft.PowerShell.Commands.NewItemCommand"
@@ -827,7 +880,7 @@ Describe "Hard link and symbolic link tests" -Tags "CI", "RequireAdminOnWindows"
 
                 Remove-Item -Path $Link -ErrorAction SilentlyContinue > $null
                 Test-Path -Path $Link | Should -BeFalse
-                Test-Path -Path $Target | Should -BeTrue
+                Test-Path -LiteralPath $Target | Should -BeTrue
             }
         }
 
@@ -1151,6 +1204,20 @@ Describe "Extended FileSystem Item/Content Cmdlet Provider Tests" -Tags "Feature
             New-Item -Path . -ItemType Directory -Name $testDir > $null
             $result = New-Item -Path . -ItemType Directory -Name $testDir -Force #would normally fail without force
             $result.Name | Should -BeExactly $testDir
+        }
+
+        It "Verify Directory creation when path relative to current PSDrive is empty" {
+            try {
+                $rootDir = New-Item "NewDirectory" -ItemType Directory -Force
+                $rootPath = $rootDir.FullName
+                $newPSDrive = New-PSDrive -Name "NewPSDrive" -PSProvider FileSystem -Root $rootPath
+
+                $result = New-Item -Path "NewPSDrive:\" -ItemType Directory -Force
+                $result.FullName.TrimEnd("/\") | Should -BeExactly $newPSDrive.Root
+            }
+            finally {
+                Remove-PSDrive -Name "NewPSDrive" -Force -ErrorAction SilentlyContinue
+            }
         }
 
         It "Verify File + Value" {

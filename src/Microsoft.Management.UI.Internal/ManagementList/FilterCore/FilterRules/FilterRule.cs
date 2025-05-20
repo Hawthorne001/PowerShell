@@ -2,7 +2,6 @@
 // Licensed under the MIT License.
 
 using System;
-using System.Diagnostics.CodeAnalysis;
 
 namespace Microsoft.Management.UI.Internal
 {
@@ -11,7 +10,7 @@ namespace Microsoft.Management.UI.Internal
     /// </summary>
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.MSInternal", "CA903:InternalNamespaceShouldNotContainPublicTypes")]
     [Serializable]
-    public abstract class FilterRule : IEvaluate
+    public abstract class FilterRule : IEvaluate, IDeepCloneable
     {
         /// <summary>
         /// Gets a value indicating whether the FilterRule can be
@@ -35,10 +34,26 @@ namespace Microsoft.Management.UI.Internal
         }
 
         /// <summary>
-        /// Initializes a new instance of the FilterRule class.
+        /// Initializes a new instance of the <see cref="FilterRule"/> class.
         /// </summary>
         protected FilterRule()
         {
+        }
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="FilterRule"/> class.
+        /// </summary>
+        /// <param name="source">The source to initialize from.</param>
+        protected FilterRule(FilterRule source)
+        {
+            ArgumentNullException.ThrowIfNull(source);
+            this.DisplayName = source.DisplayName;
+        }
+
+        /// <inheritdoc cref="IDeepCloneable.DeepClone()" />
+        public object DeepClone()
+        {
+            return Activator.CreateInstance(this.GetType(), new object[] { this });
         }
 
         /// <summary>
@@ -62,14 +77,12 @@ namespace Microsoft.Management.UI.Internal
         /// </summary>
         protected void NotifyEvaluationResultInvalidated()
         {
-            #pragma warning disable IDE1005 // IDE1005: Delegate invocation can be simplified.
             var eh = this.EvaluationResultInvalidated;
 
             if (eh != null)
             {
                 eh(this, new EventArgs());
             }
-            #pragma warning restore IDE1005
         }
 
         #endregion
